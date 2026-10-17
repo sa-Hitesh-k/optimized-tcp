@@ -11,6 +11,7 @@ The client must be started separately (see tahoe_client.py).
 import argparse
 import math
 import os
+import random
 import socket
 import struct
 import time
@@ -39,8 +40,10 @@ def send_file(
     delay: float,
     jitter: float,
     bandwidth_mbps: Optional[float],
+    send_completion: bool = False,
 ) -> None:
-    """Core transfer loop implementing TCP Tahoe."""
+    """Core transfer loop implementing the selected TCP-style variant."""
+    send_control = getattr(server_socket, "send_control", server_socket.sendto)
     file_size = os.path.getsize(path)
     total_packets = math.ceil(file_size / CHUNK_SIZE)
 
@@ -48,10 +51,10 @@ def send_file(
     # We send four big-endian floats: loss, delay, jitter, bw(Mbps) with 0 = ∞.
     bw_value = 0.0 if bandwidth_mbps is None else float(bandwidth_mbps)
     param_payload = struct.pack('>ffff', float(loss), float(delay), float(jitter), bw_value)
-    server_socket.sendto(param_payload, client_addr)
+    send_control(param_payload, client_addr)
 
     # Inform client about incoming file size
-    server_socket.sendto(struct.pack('>Q', file_size), client_addr)
+    send_control(struct.pack('>Q', file_size), client_addr)
     print(f"[+] Sent file size ({file_size} bytes) to {client_addr}")
 
     tahoe = CongestionCls()
@@ -64,10 +67,26 @@ def send_file(
     with open(path, 'rb') as f:
         data = f.read()
 
-    start_time = time.time()
+    start_time = time.monotonic()
 
-    # Map seq -> (send_time, retries)
+    # Map sequence number to its most recent send time.
     in_flight = {}
+
+    def retransmit(seq_num: int, event: str) -> None:
+        packet = struct.pack('>I', seq_num) + data[
+            seq_num * CHUNK_SIZE : (seq_num + 1) * CHUNK_SIZE
+        ]
+        server_socket.sendto(packet, client_addr)
+        in_flight[seq_num] = time.monotonic()
+        print(
+            f"[TRACE] elapsed={time.monotonic() - start_time:.3f} "
+            f"event={event} seq={seq_num} cwnd={tahoe.cwnd} ssthresh={tahoe.ssthresh}"
+        )
+        print(
+            f"[TRACE] elapsed={time.monotonic() - start_time:.3f} "
+            f"event=RETRANSMIT seq={seq_num} "
+            f"cwnd={tahoe.cwnd} ssthresh={tahoe.ssthresh}"
+        )
 
     while base_seq < total_packets:
         # Send data while window allows
@@ -76,46 +95,80 @@ def send_file(
             chunk = data[offset : offset + CHUNK_SIZE]
             header = struct.pack('>I', next_seq)
             server_socket.sendto(header + chunk, client_addr)
-            in_flight[next_seq] = time.time()
+            in_flight[next_seq] = time.monotonic()
             next_seq += 1
 
         # Wait for ACKs (non-blocking)
         server_socket.settimeout(0.01)
         try:
             ack_bytes, _ = server_socket.recvfrom(4)
-            ack_seq = struct.unpack('>I', ack_bytes)[0]
-            if ack_seq >= base_seq:
-                # New ACK
-                base_seq = ack_seq + 1
+            ack_number = struct.unpack('>I', ack_bytes)[0]
+            if base_seq < ack_number <= next_seq:
+                base_seq = ack_number
                 # Remove acknowledged packets from in-flight list
                 for seq_num in list(in_flight):
-                    if seq_num <= ack_seq:
+                    if seq_num < ack_number:
                         in_flight.pop(seq_num, None)
-                tahoe.on_ack()
+                old_cwnd = tahoe.cwnd
+                if isinstance(tahoe, TCPNewReno):
+                    partial_ack = tahoe.on_new_ack(ack_number)
+                else:
+                    tahoe.on_ack()
+                    partial_ack = False
+                if tahoe.cwnd != old_cwnd:
+                    print(
+                        f"[TRACE] elapsed={time.monotonic() - start_time:.3f} "
+                        f"event=ACK cwnd={tahoe.cwnd} ssthresh={tahoe.ssthresh}"
+                    )
+                if partial_ack and base_seq < next_seq:
+                    retransmit(base_seq, "PARTIAL_ACK")
+            elif (
+                ack_number == base_seq
+                and base_seq < next_seq
+                and isinstance(tahoe, TCPNewReno)
+                and tahoe.on_duplicate_ack(next_seq - base_seq, next_seq - 1)
+            ):
+                retransmit(base_seq, "FAST_RETRANSMIT")
         except socket.timeout:
             pass  # no ack this moment
 
         # Check for timeouts (loss)
-        current_time = time.time()
-        for seq_num, sent_at in list(in_flight.items()):
-            if current_time - sent_at > ACK_TIMEOUT:
-                print(f"[!] Timeout for seq {seq_num} - triggering Tahoe back-off")
+        current_time = time.monotonic()
+        sent_at = in_flight.get(base_seq)
+        if sent_at is not None and current_time - sent_at > ACK_TIMEOUT:
+            old_cwnd = tahoe.cwnd
+            old_ssthresh = tahoe.ssthresh
+            if isinstance(tahoe, TCPNewReno):
+                tahoe.on_timeout(next_seq - base_seq)
+            else:
                 tahoe.on_timeout()
-                # Retransmit from first unacknowledged packet
-                next_seq = base_seq
-                in_flight.clear()
-                break  # break out to restart send loop with new cwnd
+            print(
+                f"[TRACE] elapsed={time.monotonic() - start_time:.3f} "
+                f"event=TIMEOUT seq={base_seq} cwnd={old_cwnd}->{tahoe.cwnd} "
+                f"ssthresh={old_ssthresh}->{tahoe.ssthresh}"
+            )
+            for retry_seq in sorted(in_flight):
+                print(
+                    f"[TRACE] elapsed={time.monotonic() - start_time:.3f} "
+                    f"event=RETRANSMIT seq={retry_seq} "
+                    f"cwnd={tahoe.cwnd} ssthresh={tahoe.ssthresh}"
+                )
+            # Retransmit from first unacknowledged packet
+            next_seq = base_seq
+            in_flight.clear()
 
         # Progress display
         if base_seq % 100 == 0:
             progress = (base_seq / total_packets) * 100
-            throughput = (base_seq * CHUNK_SIZE) / (time.time() - start_time + 1e-6) / 1024 / 1024
+            throughput = (base_seq * CHUNK_SIZE) / (time.monotonic() - start_time + 1e-6) / 1024 / 1024
             print(
                 f"\rProgress: {progress:6.2f}% | cwnd={tahoe.cwnd:3d} | ssthresh={tahoe.ssthresh:3d} | "
                 f"throughput={throughput:6.2f} MB/s",
                 end='',
             )
 
+    if send_completion:
+        send_control(b"TRANSFER_COMPLETE", client_addr)
     print("\n[+] Transfer complete")
 
 
@@ -130,8 +183,11 @@ def main() -> None:
     parser.add_argument('--delay', type=float, default=0.0, help='Base one-way delay in seconds')
     parser.add_argument('--jitter', type=float, default=0.0, help='Jitter (std-dev) in seconds')
     parser.add_argument('--bandwidth', type=float, default=None, help='Bandwidth cap in Mbps (per direction; 0 or negative for unlimited)')
+    parser.add_argument('--seed', type=int, default=None, help='Optional random seed for repeatable simulated loss')
 
     args = parser.parse_args()
+    if args.seed is not None:
+        random.seed(args.seed)
 
     if not os.path.isfile(args.file):
         raise FileNotFoundError(args.file)
@@ -169,7 +225,18 @@ def main() -> None:
     }
     CongestionCls = variant_map[args.variant]
 
-    send_file(sock, client_addr, args.file, CongestionCls, loss=args.loss, delay=args.delay, jitter=args.jitter, bandwidth_mbps=args.bandwidth)
+    send_file(
+        sock,
+        client_addr,
+        args.file,
+        CongestionCls,
+        loss=args.loss,
+        delay=args.delay,
+        jitter=args.jitter,
+        bandwidth_mbps=args.bandwidth,
+        send_completion=True,
+    )
+    print(f"[METRIC] data_drops={sock.dropped_packets}")
 
 
 if __name__ == '__main__':

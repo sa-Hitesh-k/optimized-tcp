@@ -43,6 +43,7 @@ class NetworkSimulator:
         self.jitter = jitter
         # Convert bandwidth to bytes/s if provided in bits/s or bytes/s?
         self.bandwidth = bandwidth  # Already bytes/s expected.
+        self.dropped_packets = 0
 
         # Book-keeping for simple token-bucket bandwidth limiting.
         self._lock = threading.Lock()
@@ -56,6 +57,7 @@ class NetworkSimulator:
         # Simulate packet loss
         if random.random() < self.loss_rate:
             # Pretend the datagram was sent successfully but actually drop it.
+            self.dropped_packets += 1
             return len(data)
 
         # Propagation delay + jitter
@@ -68,6 +70,10 @@ class NetworkSimulator:
             self._rate_limit(len(data))
 
         return self._sock.sendto(data, address, *args, **kwargs)
+
+    def send_control(self, data: bytes, address: Tuple[str, int]) -> int:
+        """Send protocol setup data without simulated loss or impairment."""
+        return self._sock.sendto(data, address)
 
     def recvfrom(self, bufsize: int, *args: Any, **kwargs: Any):  # type: ignore[override]
         """Direct passthrough for *recvfrom* – inbound impairments can be

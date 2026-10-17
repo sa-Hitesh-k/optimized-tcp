@@ -20,9 +20,11 @@ from __future__ import annotations
 
 import argparse
 import os
+import random
 import re
 import socket
 import struct
+import tempfile
 from typing import List, Tuple, Any, Optional
 
 from network_simulator import NetworkSimulator
@@ -35,6 +37,8 @@ from tcp_newreno import TCPNewReno
 # Helpers
 # -----------------------------------------------------------------------------
 _BITRATE_RE = re.compile(r"(\d+)k", re.IGNORECASE)
+MEASURE_FIRST_REQUEST = 0xFFFFFFFF
+REPRESENTATION_REQUEST_FLAG = 0x80000000
 
 
 def discover_representations(directory: str) -> List[Tuple[int, str, int]]:
@@ -70,8 +74,11 @@ def main() -> None:
     parser.add_argument("--delay", type=float, default=0.0)
     parser.add_argument("--jitter", type=float, default=0.0)
     parser.add_argument("--bandwidth", type=float, default=None, help="Mbps (0 = unlimited)")
+    parser.add_argument("--seed", type=int, default=None, help="Seed simulated data loss")
 
     args = parser.parse_args()
+    if args.seed is not None:
+        random.seed(args.seed)
 
     reps = discover_representations(args.dir)
     print("[+] Found representations:")
@@ -123,6 +130,33 @@ def main() -> None:
         # ------------------------------------------------------------------
         idx_bytes, _ = sock.recvfrom(4)
         rep_idx = struct.unpack(">I", idx_bytes)[0]
+        if rep_idx == MEASURE_FIRST_REQUEST:
+            probe_bitrate, probe_path, _probe_size = reps[0]
+            print(f"[+] Measure-first probe: first 256 KiB of {probe_bitrate} kbps video")
+            probe_fd, probe_file = tempfile.mkstemp(prefix="optimized-tcp-probe-")
+            try:
+                with os.fdopen(probe_fd, "wb") as probe_output:
+                    with open(probe_path, "rb") as source_video:
+                        probe_output.write(source_video.read(256 * 1024))
+                send_file(
+                    sock,
+                    client_addr,
+                    probe_file,
+                    CongestionCls,
+                    loss=args.loss,
+                    delay=args.delay,
+                    jitter=args.jitter,
+                    bandwidth_mbps=args.bandwidth,
+                )
+            finally:
+                os.unlink(probe_file)
+            while True:
+                idx_bytes, _ = sock.recvfrom(4)
+                request = struct.unpack(">I", idx_bytes)[0]
+                if request & REPRESENTATION_REQUEST_FLAG:
+                    rep_idx = request & ~REPRESENTATION_REQUEST_FLAG
+                    break
+                print(f"[TRACE] Ignoring non-selection packet during adaptation: {request}")
         if rep_idx >= len(reps):
             print("[!] Invalid representation index from client -> closing")
             continue
@@ -142,6 +176,7 @@ def main() -> None:
             jitter=args.jitter,
             bandwidth_mbps=args.bandwidth,
         )
+        print(f"[METRIC] data_drops={sock.dropped_packets}")
         print("[+] Session finished\n")
 
 

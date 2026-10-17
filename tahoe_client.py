@@ -10,9 +10,11 @@ Usage:
 import argparse
 import math
 import os
+import random
 import socket
 import struct
 import sys
+import time
 from typing import Tuple, Any
 
 from network_simulator import NetworkSimulator
@@ -40,7 +42,10 @@ def main() -> None:
     parser.add_argument('--delay', type=float, default=None, help='Base one-way delay (s). If omitted, use value sent by server.')
     parser.add_argument('--jitter', type=float, default=None, help='Jitter (std-dev, s). If omitted, use value sent by server.')
     parser.add_argument('--bandwidth', type=float, default=None, help='Bandwidth cap in Mbps. If omitted, use value sent by server (0==∞).')
+    parser.add_argument('--seed', type=int, default=None, help='Optional random seed for repeatable simulated ACK loss')
     args = parser.parse_args()
+    if args.seed is not None:
+        random.seed(args.seed)
 
     raw_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     server_addr: Tuple[str, int] = (args.host, args.port)
@@ -91,17 +96,36 @@ def main() -> None:
                 f.write(packet[4:])
                 bytes_written += len(packet) - 4
 
-                # ACK this packet
-                sock.sendto(struct.pack('>I', seq), server_addr)
-
                 expected_seq += 1
+                # ACK the next expected sequence so the sender can detect gaps.
+                sock.sendto(struct.pack('>I', expected_seq), server_addr)
 
                 if expected_seq % 100 == 0 or expected_seq == total_packets:
                     progress = (expected_seq / total_packets) * 100
                     print(f"\rProgress: {progress:6.2f}%", end='')
             else:
-                # Out-of-order packet -> ignore (server will retransmit if needed)
+                # A cumulative duplicate ACK reports the gap or repeated packet.
+                sock.sendto(struct.pack('>I', expected_seq), server_addr)
+                # Out-of-order packets wait for the missing in-order segment.
                 continue
+
+    # Wait until the sender has received the final ACK; retry that ACK if it
+    # was lost, rather than exiting while the sender retransmits forever.
+    sock.settimeout(2.0)
+    completion_deadline = time.monotonic() + 30.0
+    while True:
+        if time.monotonic() >= completion_deadline:
+            raise TimeoutError("Sender did not confirm transfer completion")
+        try:
+            final_packet, _ = sock.recvfrom(CHUNK_SIZE + 4)
+        except socket.timeout:
+            continue
+        if final_packet == b"TRANSFER_COMPLETE":
+            break
+        if len(final_packet) >= 4:
+            final_seq = struct.unpack(">I", final_packet[:4])[0]
+            if final_seq < expected_seq:
+                sock.sendto(struct.pack(">I", expected_seq), server_addr)
 
     print("\n[+] Download complete")
     # Verify integrity (basic)
@@ -110,6 +134,7 @@ def main() -> None:
     else:
         print('[!] Integrity check failed')
         sys.exit(1)
+    print(f"[METRIC] ack_drops={sock.dropped_packets}")
 
 
 if __name__ == '__main__':

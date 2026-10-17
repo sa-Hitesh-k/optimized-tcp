@@ -1,0 +1,40 @@
+Completed 1/36: TAHOE, loss=0.00%, trial=1, time=1.65s, throughput=2.64Mbps, retransmissions=0
+Completed 2/36: TAHOE, loss=0.00%, trial=2, time=1.65s, throughput=2.63Mbps, retransmissions=0
+Completed 3/36: TAHOE, loss=0.00%, trial=3, time=6.64s, throughput=0.66Mbps, retransmissions=641
+Completed 4/36: RENO, loss=0.00%, trial=1, time=1.79s, throughput=2.44Mbps, retransmissions=0
+Completed 5/36: RENO, loss=0.00%, trial=2, time=1.57s, throughput=2.77Mbps, retransmissions=0
+Completed 6/36: RENO, loss=0.00%, trial=3, time=1.58s, throughput=2.75Mbps, retransmissions=0
+Completed 7/36: NEWRENO, loss=0.00%, trial=1, time=1.69s, throughput=2.58Mbps, retransmissions=0
+Completed 8/36: NEWRENO, loss=0.00%, trial=2, time=1.65s, throughput=2.64Mbps, retransmissions=0
+Completed 9/36: NEWRENO, loss=0.00%, trial=3, time=1.62s, throughput=2.69Mbps, retransmissions=0
+Completed 10/36: TAHOE, loss=0.20%, trial=1, time=3.62s, throughput=1.20Mbps, retransmissions=450
+Completed 11/36: TAHOE, loss=0.20%, trial=2, time=2.57s, throughput=1.69Mbps, retransmissions=143
+Completed 12/36: TAHOE, loss=0.20%, trial=3, time=3.59s, throughput=1.21Mbps, retransmissions=336
+Completed 13/36: RENO, loss=0.20%, trial=1, time=3.86s, throughput=1.13Mbps, retransmissions=452
+Completed 14/36: RENO, loss=0.20%, trial=2, time=2.62s, throughput=1.67Mbps, retransmissions=143
+Completed 15/36: RENO, loss=0.20%, trial=3, time=3.51s, throughput=1.24Mbps, retransmissions=336
+Completed 16/36: NEWRENO, loss=0.20%, trial=1, time=4.18s, throughput=1.04Mbps, retransmissions=435
+Completed 17/36: NEWRENO, loss=0.20%, trial=2, time=3.15s, throughput=1.38Mbps, retransmissions=144
+Completed 18/36: NEWRENO, loss=0.20%, trial=3, time=3.40s, throughput=1.28Mbps, retransmissions=208
+Completed 19/36: TAHOE, loss=0.40%, trial=1, time=4.67s, throughput=0.93Mbps, retransmissions=561
+Completed 20/36: TAHOE, loss=0.40%, trial=2, time=2.62s, throughput=1.66Mbps, retransmissions=143
+Completed 21/36: TAHOE, loss=0.40%, trial=3, time=6.62s, throughput=0.66Mbps, retransmissions=716
+Completed 22/36: RENO, loss=0.40%, trial=1, time=5.57s, throughput=0.78Mbps, retransmissions=584
+Completed 23/36: RENO, loss=0.40%, trial=2, time=2.56s, throughput=1.70Mbps, retransmissions=143
+Completed 24/36: RENO, loss=0.40%, trial=3, time=6.60s, throughput=0.66Mbps, retransmissions=610
+Completed 25/36: NEWRENO, loss=0.40%, trial=1, time=4.62s, throughput=0.94Mbps, retransmissions=529
+Completed 26/36: NEWRENO, loss=0.40%, trial=2, time=3.34s, throughput=1.30Mbps, retransmissions=144
+Completed 27/36: NEWRENO, loss=0.40%, trial=3, time=6.64s, throughput=0.66Mbps, retransmissions=636
+Completed 28/36: TAHOE, loss=0.70%, trial=1, time=4.58s, throughput=0.95Mbps, retransmissions=574
+Completed 29/36: TAHOE, loss=0.70%, trial=2, time=4.60s, throughput=0.95Mbps, retransmissions=288
+Completed 30/36: TAHOE, loss=0.70%, trial=3, time=7.58s, throughput=0.57Mbps, retransmissions=735
+Completed 31/36: RENO, loss=0.70%, trial=1, time=4.52s, throughput=0.96Mbps, retransmissions=549
+Completed 32/36: RENO, loss=0.70%, trial=2, time=4.56s, throughput=0.96Mbps, retransmissions=424
+Completed 33/36: RENO, loss=0.70%, trial=3, time=10.65s, throughput=0.41Mbps, retransmissions=704
+Completed 34/36: NEWRENO, loss=0.70%, trial=1, time=5.87s, throughput=0.74Mbps, retransmissions=783
+Completed 35/36: NEWRENO, loss=0.70%, trial=2, time=6.48s, throughput=0.67Mbps, retransmissions=549
+Completed 36/36: NEWRENO, loss=0.70%, trial=3, time=9.13s, throughput=0.48Mbps, retransmissions=753
+SUMMARY Best throughput: RENO at 0.00% loss (2.65 Mbps).
+SUMMARY Lowest transfer time: RENO at 0.00% loss (1.65 s).
+SUMMARY Highest mean retransmissions: NEWRENO at 0.70% loss (695.00).
+CHARTS C:\PROGRAMMING\CNPROJ\optimized-tcp\variant_compare_outputs\loss_stress\streamlit\throughput_vs_loss.png, C:\PROGRAMMING\CNPROJ\optimized-tcp\variant_compare_outputs\loss_stress\streamlit\transfer_time_vs_loss.png, C:\PROGRAMMING\CNPROJ\optimized-tcp\variant_compare_outputs\loss_stress\streamlit\retransmissions_vs_loss.png

@@ -1,33 +1,14 @@
-# Adaptive Video Streaming over UDP with TCP-Style Congestion Control
+# TCP Congestion Control Improvement (Application-Layer PBL)
 
-> A from-scratch, application-layer implementation of TCP congestion control (**Tahoe**, **Reno**, **NewReno**) running on top of raw UDP sockets, combined with **adaptive bitrate (ABR) video streaming** and a built-in **network impairment simulator** (packet loss, delay, jitter, bandwidth caps). The project includes a full experiment suite that measures and plots how each algorithm behaves under different network conditions.
->
-> **What makes it stand out:** instead of reacting to congestion *after* packets are already being dropped like traditional TCP, it **probes the network up front** by sending a tiny test message, measuring the round-trip time, and predicting the available bandwidth, then **picks the right video quality before sending a single frame**. The result is faster, more reliable, lower-power delivery on weak or congested links, where getting the content through matters more than raw resolution.
+This college PBL project studies **TCP-style congestion control implemented at the application layer over UDP**. It includes simplified Tahoe, Reno, and NewReno variants, reliable ordered file transfer, configurable network impairment, adaptive video representation selection, and benchmark tools.
 
----
+**Scope:** this project does not modify or replace the operating system's native TCP stack and does not introduce a new TCP congestion-control algorithm. Its improvement focus is evaluating and adapting application-layer transmission behavior under changing simulated network conditions.
 
-## The Big Idea: It Predicts the Network *Before* Sending, Instead of Reacting After It Breaks
+## What the project measures
 
-**This is what makes the project different from ordinary streaming.**
+The sender uses a congestion window (`cwnd`) and slow-start threshold (`ssthresh`), accepts ACKs, and backs off on timeout. The network simulator can drop datagrams, add delay and jitter, and cap bandwidth. Experiments measure completed-transfer time, goodput, simulated data/ACK drops, and actual retransmitted data segments.
 
-Traditional TCP is **reactive**: it just starts blasting data at full quality and only slows down *after* the network is already overloaded and packets have started getting lost. That means every download begins by causing the very congestion it then has to recover from, wasting time, power, and bandwidth on data that never makes it through.
-
-This project flips that around and is **predictive**:
-
-1. **Probe first.** Before sending any video, the client fires off a tiny **dummy "hello" message** and starts a stopwatch.
-2. **Measure the reality of the link.** It records exactly how long that message takes to come back (the **round-trip time (RTT)**) and from that infers the network's real **available bandwidth and latency** *right now*, not in theory.
-3. **Predict what will actually fit.** Using that live measurement, it calculates how much data the connection can realistically carry, keeping a safety margin so it never over-commits.
-4. **Pick the matching video version up front.** It then chooses the exact quality (400 / 800 / 1500 kbps) the network can sustain, *before streaming a single frame*, so the transfer starts already tuned to the connection.
-
-### Why this is so much better
-
-- **No stall-and-recover cycles.** Because it never starts too aggressively, there are far fewer timeouts and retransmissions, so the transfer finishes noticeably faster.
-- **Higher real throughput (goodput).** The link stays busy carrying data that *actually arrives* instead of packets that get dropped and resent, so useful throughput goes up.
-- **Saves power and CPU.** Fewer retransmissions and no wasted effort pushing a bitrate the link can't handle means less work on both ends, ideal for mobile and battery-powered devices.
-- **Built for guaranteed delivery.** It is designed for situations where **getting the content through reliably matters more than maximum resolution**, such as weak, congested, or unstable networks. Quality is treated as the deliberate trade-off, not the goal.
-- **Adapts per connection.** Two clients on the same server automatically get different quality tuned to *their own* network conditions.
-
-> **In one line:** *Traditional TCP reacts to congestion after it happens; this system predicts the network up front and adapts before sending anything, trading a sliver of quality for much faster, more reliable, lower-power delivery.*
+The legacy adaptive mode estimates throughput from the small manifest exchange. The dashboard's measure-first experiment instead transfers a 256 KiB sample from the lowest-quality representation as a probe, measures its delivered goodput over the simulated link, and selects a media quality below 80% of that measurement. This active probe is more representative of the data path, though one probe still does not predict future Internet capacity.
 
 ---
 
@@ -38,7 +19,7 @@ When you watch a video on YouTube or Netflix, two invisible things are happening
 1. **Congestion control:** Your device and the server constantly negotiate *how fast* to send data so the network doesn't get overwhelmed and drop packets. The classic algorithms that do this are called **TCP Tahoe**, **TCP Reno**, and **TCP NewReno**.
 2. **Adaptive bitrate (ABR):** The video is stored in multiple qualities (e.g. 400 kbps, 800 kbps, 1500 kbps). If your internet is slow, the player automatically drops to a lower quality so the video keeps playing without buffering.
 
-This project **rebuilds both of these mechanisms from scratch in pure Python** so you can see exactly how they work, experiment with them, and measure how they perform when the network is bad. Instead of trusting the operating system's built-in networking, everything (windows, retransmissions, quality switching) is implemented by hand in "user space."
+This project implements simplified versions of both mechanisms in Python at the application layer. Its UDP transfer is separate from, and does not alter, operating-system TCP.
 
 **In one sentence:** *It's a mini streaming platform + a networking lab that demonstrates how the internet keeps video smooth over an unreliable connection.*
 
@@ -48,9 +29,9 @@ This project **rebuilds both of these mechanisms from scratch in pure Python** s
 
 This project demonstrates hands-on, systems-level understanding that is often only taught theoretically:
 
-- **Computer networking fundamentals:** Implements sliding-window flow control, congestion windows (`cwnd`), slow-start thresholds (`ssthresh`), timeout-based loss detection, and retransmission, the core of how the internet actually works.
+- **Computer networking fundamentals:** Implements a simplified sliding window, congestion window (`cwnd`), slow-start threshold (`ssthresh`), timeout-based loss detection, and retransmission at the application layer.
 - **Building reliability on top of an unreliable protocol:** UDP has no guarantees; this project layers sequencing, acknowledgements (ACKs), and retransmission on top of it to achieve reliable, in-order delivery, effectively re-implementing the key ideas of TCP.
-- **Adaptive systems:** A DASH/HLS-style adaptive bitrate client that estimates available bandwidth and picks the best video quality automatically.
+- **Adaptive systems:** A small manifest-RTT heuristic selects a video representation; transfer performance is evaluated separately under simulated conditions.
 - **Experimental rigor:** A complete benchmarking harness that runs controlled experiments, collects metrics (throughput, transfer time, retransmissions, chosen bitrate), and auto-generates comparison plots.
 - **Clean software engineering:** Modular design, dependency injection of the congestion-control strategy, a reusable socket wrapper, type hints, and clear separation between the protocol, the simulator, and the experiments.
 
@@ -86,8 +67,8 @@ This project demonstrates hands-on, systems-level understanding that is often on
 ### The transfer protocol (built by hand on UDP)
 - The file is split into **1024-byte chunks**, each prefixed with a **4-byte sequence number**.
 - The server only keeps `cwnd` (congestion window) packets "in flight" at once.
-- The client **ACKs** every in-order packet it receives.
-- If an ACK doesn't arrive within `ACK_TIMEOUT` (1 second), the server treats it as **packet loss**, shrinks its window according to the chosen algorithm, and **retransmits**.
+- ACKs carry the next expected sequence number. The client repeats this cumulative ACK when it receives an out-of-order packet.
+- If an ACK doesn't arrive within `ACK_TIMEOUT` (1 second), the server treats it as **packet loss**, shrinks its window according to the chosen algorithm, and **retransmits**. NewReno can also retransmit on three duplicate ACKs.
 - A small handshake sends network parameters and the total file size so the client can self-configure and verify integrity at the end.
 
 ### The congestion-control algorithms
@@ -95,28 +76,28 @@ This project demonstrates hands-on, systems-level understanding that is often on
 |---|---|---|
 | **Tahoe** | Exponential in slow-start, then linear | `ssthresh = cwnd/2`, reset `cwnd` back to **1** (full slow-start restart) |
 | **Reno** | Same growth as Tahoe | `ssthresh = cwnd/2`, set `cwnd = ssthresh` (skips slow-start, enters congestion-avoidance) |
-| **NewReno** | Same as Reno (placeholder for full fast-recovery) | Same as Reno |
+| **NewReno** | Same slow-start / congestion-avoidance growth as Reno; inflates `cwnd` on duplicate ACKs | On three duplicate ACKs, fast retransmit and enter fast recovery; a partial ACK retransmits the next missing segment, while a full ACK exits recovery. A timeout resets `cwnd` to 1. |
 
-> The variant is injected into the transfer loop as a pluggable class, so adding a new algorithm (e.g. CUBIC or BBR) is as simple as writing a class with `on_ack()` and `on_timeout()` methods.
+> NewReno is an application-layer teaching approximation, not a standards-complete TCP implementation. The simulation uses cumulative ACKs and timeout-based recovery for Tahoe and Reno; NewReno additionally handles duplicate and partial ACKs.
 
 ### Adaptive bitrate (ABR)
-The video is pre-encoded into multiple qualities (`400k.mp4`, `800k.mp4`, `1500k.mp4`). The server advertises a **manifest** of available bitrates; the client estimates throughput from the handshake round-trip time and picks the highest quality that fits within **80 % of the estimated bandwidth** (a safety margin to avoid buffering).
+The video is pre-encoded into multiple qualities (`400k.mp4`, `800k.mp4`, `1500k.mp4`). The server advertises a manifest of available representations.
 
-### The key idea: probe first, then decide (why this beats plain TCP for delivery)
-Unlike a traditional TCP download that just blindly starts blasting data at full quality and only slows down *after* the network is already congested and packets are being lost, this project **measures the network before committing to anything**:
+### Adaptive video quality selection
+The legacy client can time the manifest round trip and select the highest bitrate below 80% of that estimate. The dashboard's **Fixed vs measure-first** experiment uses a more direct probe: it downloads a 256 KiB sample from the lowest representation, measures delivered goodput, and selects the highest available bitrate below 80% of the probe rate (or the lowest available quality when none fit).
 
-1. The client first sends a tiny **dummy "hello" probe** and records exactly how long it takes to get a response back (the round-trip time).
-2. From that round-trip time it **estimates the available bandwidth and latency** of the link.
-3. It then **selects the matching version of the video** (400 / 800 / 1500 kbps) that the network can actually handle, instead of over-committing and choking.
+1. The server advertises its available representations in a manifest.
+2. Measure-first downloads a 256 KiB low-quality video sample over the same impaired link and measures its delivered goodput.
+3. It selects a representation using an 80% safety margin. The comparison includes probe bytes and time in the adaptive end-to-end result; the fixed-quality baseline starts directly with the 1500 kbps representation.
 
-Because the sender never wastes effort pushing a bitrate the connection can't sustain, this approach:
+The project does not assume this heuristic improves performance; compare actual experiment measurements:
 
-- **Saves time:** no long stall-and-recover cycles caused by starting too aggressively.
-- **Saves power/CPU:** fewer retransmissions and less wasted encoding/transfer work.
-- **Raises effective throughput:** the link stays busy with data that actually gets through, so goodput goes up.
-- **Prioritizes guaranteed delivery over raw quality:** it is designed for situations where *getting the message through reliably matters more than maximum resolution* (e.g. weak or congested networks). Quality is deliberately treated as the trade-off, not the goal.
+- Transfer time can rise when loss triggers timeout-based recovery.
+- Power use and CPU savings are not measured by this project.
+- Throughput is computed from completed transfers; its direction and magnitude depend on simulated conditions.
+- The transfer retries lost segments, but this does not guarantee delivery under every failure condition.
 
-> In short: **traditional TCP reacts to congestion; this system predicts it up front and adapts before sending a single frame of video.**
+> In short: **this project evaluates application-layer TCP-style transmission over UDP; it does not modify native TCP or claim to introduce a new TCP algorithm.**
 
 ---
 
@@ -128,7 +109,7 @@ Because the sender never wastes effort pushing a bitrate the connection can't su
 | `network_simulator.py` | Wraps a UDP socket to emulate real-world **packet loss, delay, jitter, and bandwidth caps**. Drop-in replacement for a normal socket. |
 | `tcp_tahoe.py` | TCP **Tahoe** congestion-window logic (`on_ack` / `on_timeout`). |
 | `tcp_reno.py` | TCP **Reno** congestion-window logic. |
-| `tcp_newreno.py` | TCP **NewReno** (extends Reno; placeholder for fast-recovery). |
+| `tcp_newreno.py` | TCP **NewReno** fast retransmit and fast recovery, including partial ACK handling. |
 | `tahoe_server.py` | Sends a single video file over UDP using a chosen congestion-control variant. |
 | `tahoe_client.py` | Receives the file, ACKs each packet, verifies integrity. |
 | **Adaptive streaming** | |
@@ -138,6 +119,8 @@ Because the sender never wastes effort pushing a bitrate the connection can't su
 | `encode_reps.py` | Uses FFmpeg to encode a source video into 400/800/1500 kbps representations. |
 | `compare_http_udp.py` | Benchmarks this UDP+Tahoe transfer against a standard HTTP (TCP) download and plots the result. |
 | `compare_tcp_variants.py` | Compares Tahoe vs Reno vs NewReno (throughput, time, retransmissions) at a given loss rate and plots it. |
+| `streamlit_app.py` | Streamlit dashboard with a playable NewReno video-transfer demo and the benchmark comparisons. |
+| `loss_stress_test.py` | Runs repeated comparisons across loss rates and saves measured CSV results, congestion traces, and three charts. |
 | `loss_adaptation.py` | Shows which bitrate each variant selects at a single loss rate. |
 | `unique_delay_adaptation.py` | Tunes per-variant delay to demonstrate distinct quality selections. |
 | `multi_loss_collect.py` | Runs transfers across several loss rates and saves the received videos + a summary table. |
@@ -151,14 +134,23 @@ Because the sender never wastes effort pushing a bitrate the connection can't su
 ## 5. Getting started
 
 ### Prerequisites
-- Python 3.8+
+- Python 3.8+ for the command-line scripts; use a Python version supported by Streamlit for the GUI.
 - The following Python packages:
 
 ```bash
-pip install matplotlib requests imageio-ffmpeg
+pip install matplotlib requests imageio-ffmpeg streamlit
 ```
 
-> `imageio-ffmpeg` bundles an FFmpeg binary used for encoding, `matplotlib` for the plots, and `requests` for the HTTP-vs-UDP comparison.
+> `imageio-ffmpeg` bundles an FFmpeg binary used for encoding, `matplotlib` for the plots, `requests` for the HTTP-vs-UDP comparison, and `streamlit` for the GUI.
+
+### Open the GUI
+After preparing the video representations, start the dashboard from the project folder:
+
+```bash
+streamlit run streamlit_app.py
+```
+
+The dashboard opens in your browser with a **NewReno video demo**, a **Fixed vs measure-first** comparison, a TCP variant comparison, and a **Loss Stress Test** tab. The paired video comparison measures a probe before choosing quality, and reports selected quality, probe goodput and overhead, media transfer goodput, end-to-end delivery time, retransmissions, and packet drops. Both strategies use NewReno and the same simulated link settings. The fixed baseline immediately requests 1500 kbps; adaptive includes the probe in total delivery time. The loss stress test uses the 400 kbps representation; choose loss rates, variants, and trial count in the UI.
 
 ### Step 1: Prepare the video qualities
 Encode any source video into the three bitrates the project uses:
@@ -214,6 +206,9 @@ python compare_http_udp.py --dir reps
 # Compare Tahoe vs Reno vs NewReno at a chosen loss rate
 python compare_tcp_variants.py --loss 0.002
 
+# Compare all variants at 0%, 0.2%, 0.4%, and 0.7% loss with three trials per condition
+python loss_stress_test.py --losses 0 0.002 0.004 0.007 --trials 3
+
 # Which quality each variant picks at one loss rate
 python loss_adaptation.py --dir reps --loss 0.001
 
@@ -221,7 +216,7 @@ python loss_adaptation.py --dir reps --loss 0.001
 python multi_loss_collect.py --dir reps --losses 0.0 0.002 0.004 0.007
 ```
 
-Generated `.png` plots and received videos are written to the output directories named by each script.
+The stress test writes trial-level and mean CSV files, congestion event traces, and throughput, transfer-time, and retransmission charts under `variant_compare_outputs/loss_stress/`.
 
 ---
 
@@ -239,20 +234,21 @@ Generated `.png` plots and received videos are written to the output directories
 
 ## 8. What I learned / highlights
 
-- Reliable, ordered delivery **can be rebuilt on top of unreliable UDP** using sequence numbers, ACKs, and timeouts.
-- Congestion-control algorithms have **measurably different behavior** under loss. Tahoe's full window reset is more conservative than Reno's, which shows up clearly in throughput and transfer-time plots.
-- Adaptive bitrate selection is fundamentally a **bandwidth-estimation-plus-safety-margin** problem, and small changes to the estimate change the user's perceived quality.
+- Reliable, ordered delivery can be built on UDP using sequence numbers, ACKs, duplicate-ACK handling, and timeouts.
+- Tahoe resets `cwnd` to one after timeout; Reno sets it to `ssthresh`. NewReno adds duplicate-ACK fast retransmit and partial-ACK recovery.
+- The multi-loss experiment uses repeated trials with initialized random seeds and reports measured outcomes. OS scheduling can still affect observed timing and retry counts, so interpret the trial means rather than a single run.
+- Adaptive bitrate selection is a simple bandwidth-estimate-plus-safety-margin heuristic.
 - Designing the congestion controller as a **pluggable strategy object** keeps the transfer loop clean and makes the system easy to extend.
 
 ---
 
 ## 9. Possible future work
 
-- Implement true **NewReno fast-recovery** (partial-ACK handling) and modern algorithms like **CUBIC** or **BBR**.
-- Use **duplicate-ACK-based fast retransmit** instead of relying only on timeouts.
+- Compare NewReno with modern algorithms like **CUBIC** or **BBR** under network conditions suited to each algorithm.
+- Model a wider range of TCP details, such as RTT-based retransmission timers and duplicate-ACK behavior in the Reno variant.
 - Smarter ABR (moving-average / buffer-based throughput estimation, like real DASH players).
 - Real-time playback + buffering visualization instead of a plain file download.
 
 ---
 
-*This is an academic/major project built to explore how modern video streaming stays smooth over imperfect networks by re-implementing the core algorithms from the ground up.*
+*This is an academic project for measuring simplified application-layer TCP-style transmission over impaired UDP; it is not a native TCP implementation.*
